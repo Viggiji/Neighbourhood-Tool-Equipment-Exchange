@@ -10,6 +10,7 @@ import DashboardPage from './pages/DashboardPage';
 import CreateToolPage from './pages/CreateToolPage';
 import ToolDetailsPage from './pages/ToolDetailsPage';
 import LoadingSpinner from './components/ui/LoadingSpinner';
+import NotFoundPage from './pages/NotFoundPage';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -85,7 +86,7 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </AnimatePresence>
   );

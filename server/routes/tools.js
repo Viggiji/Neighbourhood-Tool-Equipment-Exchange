@@ -125,6 +125,12 @@ router.post('/', authenticateToken, (req, res, next) => {
   }
 });
 
+// ─── GET /api/tools/categories — List valid categories ───
+// IMPORTANT: Must be declared BEFORE /:id to avoid shadowing
+router.get('/categories', (req, res) => {
+  res.json({ categories: VALID_CATEGORIES });
+});
+
 // ─── GET /api/tools — Public feed of tools ─
 router.get('/', (req, res) => {
   try {
@@ -288,9 +294,23 @@ router.put('/:id', authenticateToken, (req, res, next) => {
   }
 });
 
-// Export categories for the frontend
-router.get('/categories', (req, res) => {
-  res.json({ categories: VALID_CATEGORIES });
+// ─── DELETE /api/tools/:id — Remove a tool ──────────────
+router.delete('/:id', authenticateToken, (req, res) => {
+  try {
+    const db = getDb();
+    const existing = db.prepare('SELECT * FROM tools WHERE id = ?').get(req.params.id);
+
+    if (!existing) return res.status(404).json({ message: 'Tool not found.' });
+    if (existing.user_id !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to delete this tool.' });
+    }
+
+    db.prepare('DELETE FROM tools WHERE id = ?').run(req.params.id);
+    res.json({ message: 'Tool deleted successfully.' });
+  } catch (err) {
+    console.error('Delete tool error:', err);
+    res.status(500).json({ message: 'Could not delete tool.' });
+  }
 });
 
 module.exports = router;

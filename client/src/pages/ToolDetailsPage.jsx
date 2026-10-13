@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, Zap, Edit2, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Activity, Zap, Edit2, CheckCircle, ArrowLeft, Trash2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
@@ -27,6 +27,8 @@ export default function ToolDetailsPage() {
   const [loading, setLoading] = useState(true);
 
   const [isEditing, setIsEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [formData, setFormData] = useState({ title: '', category: '', description: '', condition: '', depositAmount: '', status: '' });
   const [file, setFile] = useState(null);
   const [errors, setErrors] = useState({});
@@ -61,6 +63,19 @@ export default function ToolDetailsPage() {
   const handleChange = (field) => (e) => {
     setFormData((prev) => ({ ...prev, [field]: e.target.value }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: '' }));
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await api.delete(`/tools/${id}`);
+      toast.success('Tool deleted successfully.');
+      navigate('/dashboard');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not delete tool.');
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
   };
 
   const handleFileChange = (e) => {
@@ -190,7 +205,7 @@ export default function ToolDetailsPage() {
                     <Edit2 size={15} className="text-[#d05a38]" /> Manage listing
                   </h2>
                   <button
-                    onClick={() => setIsEditing(!isEditing)}
+                    onClick={() => { setIsEditing(!isEditing); setConfirmDelete(false); }}
                     className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
                       isEditing
                         ? 'bg-[#2f2d2a] text-[#a8a49c]'
@@ -258,9 +273,49 @@ export default function ToolDetailsPage() {
                       <div className="w-10 h-10 rounded-xl bg-[#1a1917] border border-[#2f2d2a] flex items-center justify-center mx-auto mb-3">
                         <CheckCircle size={18} className="text-[#3d3b37]" />
                       </div>
-                      <p className="text-[#5a5751] text-sm leading-relaxed">
+                      <p className="text-[#5a5751] text-sm leading-relaxed mb-6">
                         This is your listing. Click <strong className="text-[#7d7a73]">Edit</strong> to update details, status, or the deposit rate.
                       </p>
+
+                      {/* Delete section */}
+                      <div className="border-t border-[#2f2d2a] pt-5">
+                        {!confirmDelete ? (
+                          <button
+                            onClick={() => setConfirmDelete(true)}
+                            className="flex items-center gap-2 text-[#5a5751] hover:text-[#e05040] text-xs font-medium transition-colors mx-auto"
+                          >
+                            <Trash2 size={13} /> Remove listing
+                          </button>
+                        ) : (
+                          <motion.div
+                            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                            className="rounded-xl bg-[#1a1917] border border-[#e05040]/20 p-4"
+                          >
+                            <div className="flex items-center gap-2 text-[#e05040] mb-2">
+                              <AlertTriangle size={14} />
+                              <span className="text-xs font-semibold">Delete this listing?</span>
+                            </div>
+                            <p className="text-[#5a5751] text-xs mb-4 leading-relaxed">
+                              This will permanently remove <strong className="text-[#7d7a73]">{tool.title}</strong> from the exchange.
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setConfirmDelete(false)}
+                                className="flex-1 py-2 rounded-lg bg-[#2f2d2a] text-[#7d7a73] hover:text-[#a8a49c] text-xs font-medium transition-colors"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="flex-1 py-2 rounded-lg bg-[#e05040]/15 text-[#e05040] hover:bg-[#e05040]/25 text-xs font-medium transition-colors disabled:opacity-50"
+                              >
+                                {deleting ? 'Deleting...' : 'Yes, delete'}
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
