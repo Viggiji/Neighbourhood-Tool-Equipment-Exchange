@@ -82,7 +82,10 @@ router.post('/register', async (req, res) => {
     });
   } catch (err) {
     console.error('Registration error:', err);
-    res.status(500).json({ message: 'Something went wrong. Please try again.' });
+    res.status(500).json({
+      message: err.message || 'Something went wrong. Please try again.',
+      details: err.details || err.hint || null,
+    });
   }
 });
 

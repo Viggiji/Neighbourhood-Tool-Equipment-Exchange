@@ -56,9 +56,31 @@ app.use('/auth',      authRoutes);
 app.use('/api/tools', toolRoutes);
 app.use('/tools',     toolRoutes);
 
-// Health check and root ping
-app.get(['/', '/health', '/api/health'], (req, res) => {
-  res.json({ status: 'ok', service: 'ntee-api', timestamp: new Date().toISOString() });
+// Health check and root ping with DB diagnostic
+app.get(['/', '/health', '/api/health'], async (req, res) => {
+  let dbStatus = 'unknown';
+  let dbError = null;
+  try {
+    const { getDb } = require('./db/schema');
+    const db = getDb();
+    const { data, error } = await db.from('users').select('id').limit(1);
+    if (error) {
+      dbStatus = 'table_or_query_error';
+      dbError = error.message;
+    } else {
+      dbStatus = 'connected';
+    }
+  } catch (e) {
+    dbStatus = 'connection_or_env_error';
+    dbError = e.message;
+  }
+
+  res.json({
+    status: 'ok',
+    service: 'ntee-api',
+    database: { status: dbStatus, error: dbError },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ─── Start ───────────────────────────────────────────────────
