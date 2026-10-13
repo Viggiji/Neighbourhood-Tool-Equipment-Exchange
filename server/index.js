@@ -11,18 +11,26 @@ const app  = express();
 const PORT = process.env.PORT || 5000;
 
 // ─── CORS ────────────────────────────────────────────────────
-// In production the frontend is on a different origin (Vercel),
-// so we need sameSite:'none' + credentials.
 const allowedOrigins = [
-  process.env.CLIENT_URL || 'http://localhost:5173',
-];
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. curl, Postman)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (e.g. curl, mobile apps, Postman)
+    if (!origin) return callback(null, true);
+
+    // Allow explicitly matched origins or any Vercel deployment preview / production URL
+    const isAllowed = allowedOrigins.includes(origin) ||
+                      origin.endsWith('.vercel.app') ||
+                      origin.includes('localhost');
+
+    if (isAllowed) {
       callback(null, true);
     } else {
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -39,14 +47,18 @@ const authLimiter = rateLimit({
   message: { message: 'Too many requests. Please try again later.' },
 });
 app.use('/api/auth', authLimiter);
+app.use('/auth',     authLimiter);
 
-// ─── Routes ──────────────────────────────────────────────────
+// ─── Routes (support both /api/* and /* paths) ────────────────
 app.use('/api/auth',  authRoutes);
-app.use('/api/tools', toolRoutes);
+app.use('/auth',      authRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.use('/api/tools', toolRoutes);
+app.use('/tools',     toolRoutes);
+
+// Health check and root ping
+app.get(['/', '/health', '/api/health'], (req, res) => {
+  res.json({ status: 'ok', service: 'ntee-api', timestamp: new Date().toISOString() });
 });
 
 // ─── Start ───────────────────────────────────────────────────

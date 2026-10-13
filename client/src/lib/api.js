@@ -1,8 +1,21 @@
 import axios from 'axios';
 
-// In production VITE_API_URL = 'https://your-app.onrender.com/api'
-// In dev, Vite proxies /api → localhost:5000 so we use the relative path
-const baseURL = import.meta.env.VITE_API_URL || '/api';
+// In production VITE_API_URL = 'https://your-app.onrender.com/api' (or 'https://your-app.onrender.com')
+// In dev, Vite proxies /api → localhost:5000
+let rawURL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+
+let baseURL;
+if (rawURL) {
+  // If user provided full URL without /api, ensure /api is attached
+  baseURL = rawURL.endsWith('/api') ? rawURL : `${rawURL}/api`;
+} else {
+  // Fallback to relative /api for local dev proxy
+  baseURL = '/api';
+}
+
+if (typeof window !== 'undefined') {
+  console.log('🔗 [NTEE API] Target:', baseURL, '| VITE_API_URL env:', import.meta.env.VITE_API_URL || '(not set)');
+}
 
 const api = axios.create({
   baseURL,
