@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Fonts loaded via index.html — DM Sans (body) + DM Serif Display (headings) */
+/* Fonts loaded via index.html Â— DM Sans (body) + DM Serif Display (headings) */
 
 /* --- Design Tokens -------------------------------------- */
 @theme {
@@ -24,7 +24,7 @@
   --color-accent-300: #f08b6a;
   --color-accent-200: #f8b9a3;
 
-  /* Sage green — secondary accent */
+  /* Sage green Â— secondary accent */
   --color-sage-600: #3d5a40;
   --color-sage-500: #4e7252;
   --color-sage-400: #6a9870;
