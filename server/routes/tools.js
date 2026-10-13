@@ -1,28 +1,16 @@
 const express = require('express');
-const multer = require('multer');
-const path = require('path');
+const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/schema');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// ─── Configure Multer for File Uploads ────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '..', 'uploads'));
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-
+// ─── Multer — memory storage (we upload to Supabase, not disk) ──
 const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
   fileFilter: (req, file, cb) => {
-    // Strictly validate MIME types (JPEG/PNG only)
     if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') {
       cb(null, true);
     } else {
@@ -31,6 +19,7 @@ const upload = multer({
   },
 });
 
+const STORAGE_BUCKET   = 'tool-images'; // Supabase Storage bucket name
 const VALID_CATEGORIES = [
   'Power Tools',
   'Hand Tools',
@@ -39,7 +28,149 @@ const VALID_CATEGORIES = [
   'Other',
 ];
 
-// ─── POST /api/tools — Add a new tool ──────────
+// ─── Helper: upload buffer to Supabase Storage ────────────────
+async function uploadImageToSupabase(db, file) {
+  if (!file) return null;
+
+  const ext      = file.mimetype === 'image/jpeg' ? 'jpg' : 'png';
+  const filename = `${uuidv4()}.${ext}`;
+
+  const { error } = await db.storage
+    .from(STORAGE_BUCKET)
+    .upload(filename, file.buffer, { contentType: file.mimetype, upsert: false });
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data } = db.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+  return data.publicUrl;
+}
+
+// ─── GET /api/tools/categories ────────────────────────────────
+// IMPORTANT: Must be declared BEFORE /:id to avoid shadowing
+router.get('/categories', (req, res) => {
+  res.json({ categories: VALID_CATEGORIES });
+});
+
+// ─── GET /api/tools — Public feed ────────────────────────────
+router.get('/', async (req, res) => {
+  try {
+    const { search, category, status } = req.query;
+    const db = getDb();
+
+    let query = db
+      .from('tools')
+      .select(`
+        id, title, category, description, condition, deposit_amount,
+        status, image_url, created_at,
+        users ( full_name, block_code )
+      `)
+      .order('created_at', { ascending: false });
+
+    // Status filter
+    if (status) {
+      query = query.eq('status', status);
+    } else {
+      query = query.in('status', ['Available', 'Online']);
+    }
+
+    if (category) query = query.eq('category', category);
+    if (search)   query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+
+    const { data: tools, error } = await query;
+    if (error) throw error;
+
+    res.json({
+      tools: tools.map(t => ({
+        id:           t.id,
+        title:        t.title,
+        category:     t.category,
+        description:  t.description,
+        condition:    t.condition,
+        depositAmount: t.deposit_amount,
+        status:       t.status,
+        imageUrl:     t.image_url,
+        ownerName:    t.users?.full_name,
+        ownerBlock:   t.users?.block_code,
+        createdAt:    t.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('Fetch tools error:', err);
+    res.status(500).json({ message: 'Could not load tools.' });
+  }
+});
+
+// ─── GET /api/tools/my — Current user's tools ─────────────────
+router.get('/my', authenticateToken, async (req, res) => {
+  try {
+    const db = getDb();
+    const { data: tools, error } = await db
+      .from('tools')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({
+      tools: tools.map(t => ({
+        id:           t.id,
+        title:        t.title,
+        category:     t.category,
+        description:  t.description,
+        condition:    t.condition,
+        depositAmount: t.deposit_amount,
+        status:       t.status,
+        imageUrl:     t.image_url,
+        createdAt:    t.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('Fetch my tools error:', err);
+    res.status(500).json({ message: 'Could not load your tools.' });
+  }
+});
+
+// ─── GET /api/tools/:id — Single tool ────────────────────────
+router.get('/:id', async (req, res) => {
+  try {
+    const db = getDb();
+    const { data: tool, error } = await db
+      .from('tools')
+      .select(`
+        id, title, category, description, condition, deposit_amount,
+        status, image_url, created_at, user_id,
+        users ( full_name, block_code )
+      `)
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!tool)  return res.status(404).json({ message: 'Tool not found.' });
+
+    res.json({
+      tool: {
+        id:           tool.id,
+        title:        tool.title,
+        category:     tool.category,
+        description:  tool.description,
+        condition:    tool.condition,
+        depositAmount: tool.deposit_amount,
+        status:       tool.status,
+        imageUrl:     tool.image_url,
+        ownerId:      tool.user_id,
+        ownerName:    tool.users?.full_name,
+        ownerBlock:   tool.users?.block_code,
+        createdAt:    tool.created_at,
+      },
+    });
+  } catch (err) {
+    console.error('Fetch tool error:', err);
+    res.status(500).json({ message: 'Could not load tool details.' });
+  }
+});
+
+// ─── POST /api/tools — Create a tool ─────────────────────────
 router.post('/', authenticateToken, (req, res, next) => {
   upload.single('image')(req, res, function (err) {
     if (err instanceof multer.MulterError) {
@@ -49,74 +180,60 @@ router.post('/', authenticateToken, (req, res, next) => {
     }
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
     const { title, category, description, condition, depositAmount } = req.body;
     const errors = {};
 
-    if (!title || !title.trim()) {
-      errors.title = 'Tool name is required.';
-    } else if (title.trim().length < 3) {
-      errors.title = 'Tool name should be at least 3 characters.';
-    }
-
-    if (!category || !category.trim()) {
-      errors.category = 'Select a category.';
-    } else if (!VALID_CATEGORIES.includes(category)) {
-      errors.category = 'Please select a valid category.';
-    }
-
-    if (!description || !description.trim()) {
-      errors.description = 'Provide a description.';
-    } else if (description.trim().length < 10) {
-      errors.description = 'Description should be at least 10 characters.';
-    }
-
-    if (!condition || !condition.trim()) {
-      errors.condition = 'Specify condition.';
-    }
-
+    if (!title?.trim()) errors.title = 'Tool name is required.';
+    else if (title.trim().length < 3) errors.title = 'Tool name should be at least 3 characters.';
+    if (!category?.trim()) errors.category = 'Select a category.';
+    else if (!VALID_CATEGORIES.includes(category)) errors.category = 'Please select a valid category.';
+    if (!description?.trim()) errors.description = 'Provide a description.';
+    else if (description.trim().length < 10) errors.description = 'Description should be at least 10 characters.';
+    if (!condition?.trim()) errors.condition = 'Specify condition.';
     if (depositAmount === undefined || depositAmount === null || depositAmount === '') {
       errors.depositAmount = 'Specify deposit amount.';
     } else if (isNaN(Number(depositAmount)) || Number(depositAmount) < 0) {
       errors.depositAmount = 'Must be a valid positive number.';
     }
 
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
-
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({ message: 'Validation failed.', errors });
     }
 
     const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO tools (user_id, title, category, description, condition, deposit_amount, status, image_url)
-      VALUES (?, ?, ?, ?, ?, ?, 'Available', ?)
-    `);
-    const result = stmt.run(
-      req.user.id,
-      title.trim(),
-      category.trim(),
-      description.trim(),
-      condition.trim(),
-      Number(depositAmount),
-      imageUrl
-    );
+    const imageUrl = await uploadImageToSupabase(db, req.file);
 
-    const toolRecord = db.prepare('SELECT * FROM tools WHERE id = ?').get(result.lastInsertRowid);
+    const { data: tool, error } = await db
+      .from('tools')
+      .insert({
+        user_id:        req.user.id,
+        title:          title.trim(),
+        category:       category.trim(),
+        description:    description.trim(),
+        condition:      condition.trim(),
+        deposit_amount: Number(depositAmount),
+        status:         'Available',
+        image_url:      imageUrl,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
 
     res.status(201).json({
       message: 'Tool added successfully.',
       tool: {
-        id: toolRecord.id,
-        title: toolRecord.title,
-        category: toolRecord.category,
-        description: toolRecord.description,
-        condition: toolRecord.condition,
-        depositAmount: toolRecord.deposit_amount,
-        status: toolRecord.status,
-        imageUrl: toolRecord.image_url,
-        createdAt: toolRecord.created_at,
+        id:           tool.id,
+        title:        tool.title,
+        category:     tool.category,
+        description:  tool.description,
+        condition:    tool.condition,
+        depositAmount: tool.deposit_amount,
+        status:       tool.status,
+        imageUrl:     tool.image_url,
+        createdAt:    tool.created_at,
       },
     });
   } catch (err) {
@@ -125,168 +242,47 @@ router.post('/', authenticateToken, (req, res, next) => {
   }
 });
 
-// ─── GET /api/tools/categories — List valid categories ───
-// IMPORTANT: Must be declared BEFORE /:id to avoid shadowing
-router.get('/categories', (req, res) => {
-  res.json({ categories: VALID_CATEGORIES });
-});
-
-// ─── GET /api/tools — Public feed of tools ─
-router.get('/', (req, res) => {
-  try {
-    const { search, category, status } = req.query;
-    const db = getDb();
-
-    let query = `
-      SELECT
-        t.id, t.title, t.category, t.description, t.condition, t.deposit_amount, t.status, t.image_url, t.created_at,
-        u.full_name AS owner_name, u.block_code AS owner_block
-      FROM tools t
-      JOIN users u ON t.user_id = u.id
-      WHERE 1=1
-    `;
-    const params = [];
-
-    if (status) {
-      query += ` AND t.status = ?`;
-      params.push(status);
-    } else {
-      query += ` AND t.status IN ('Available', 'Online')`;
-    }
-
-    if (category) {
-      query += ` AND t.category = ?`;
-      params.push(category);
-    }
-
-    if (search) {
-      query += ` AND (t.title LIKE ? OR t.description LIKE ?)`;
-      const searchPattern = `%${search}%`;
-      params.push(searchPattern, searchPattern);
-    }
-
-    query += ` ORDER BY t.created_at DESC`;
-
-    const tools = db.prepare(query).all(...params);
-
-    res.json({
-      tools: tools.map(t => ({
-        id: t.id,
-        title: t.title,
-        category: t.category,
-        description: t.description,
-        condition: t.condition,
-        depositAmount: t.deposit_amount,
-        status: t.status,
-        imageUrl: t.image_url,
-        ownerId: t.user_id,
-        ownerName: t.owner_name,
-        ownerBlock: t.owner_block,
-        createdAt: t.created_at,
-      })),
-    });
-  } catch (err) {
-    console.error('Fetch tools error:', err);
-    res.status(500).json({ message: 'Could not load tools.' });
-  }
-});
-
-// ─── GET /api/tools/my — User's own tools ─────────
-router.get('/my', authenticateToken, (req, res) => {
-  try {
-    const db = getDb();
-    const tools = db.prepare('SELECT * FROM tools WHERE user_id = ? ORDER BY created_at DESC')
-      .all(req.user.id);
-
-    res.json({
-      tools: tools.map(t => ({
-        id: t.id,
-        title: t.title,
-        category: t.category,
-        description: t.description,
-        condition: t.condition,
-        depositAmount: t.deposit_amount,
-        status: t.status,
-        imageUrl: t.image_url,
-        createdAt: t.created_at,
-      })),
-    });
-  } catch (err) {
-    console.error('Fetch my tools error:', err);
-    res.status(500).json({ message: 'Could not load your tools.' });
-  }
-});
-
-// ─── GET /api/tools/:id — Get a single tool ─────────
-router.get('/:id', (req, res) => {
-  try {
-    const db = getDb();
-    const tool = db.prepare(`
-      SELECT t.*, u.full_name AS owner_name, u.block_code AS owner_block
-      FROM tools t
-      JOIN users u ON t.user_id = u.id
-      WHERE t.id = ?
-    `).get(req.params.id);
-
-    if (!tool) return res.status(404).json({ message: 'Tool not found.' });
-
-    res.json({
-      tool: {
-        id: tool.id,
-        title: tool.title,
-        category: tool.category,
-        description: tool.description,
-        condition: tool.condition,
-        depositAmount: tool.deposit_amount,
-        status: tool.status,
-        imageUrl: tool.image_url,
-        ownerId: tool.user_id,
-        ownerName: tool.owner_name,
-        ownerBlock: tool.owner_block,
-        createdAt: tool.created_at,
-      }
-    });
-  } catch (err) {
-    console.error('Fetch tool error:', err);
-    res.status(500).json({ message: 'Could not load tool details.' });
-  }
-});
-
-// ─── PUT /api/tools/:id — Update a tool ─────────
+// ─── PUT /api/tools/:id — Update a tool ──────────────────────
 router.put('/:id', authenticateToken, (req, res, next) => {
   upload.single('image')(req, res, function (err) {
-    if (err) {
-      return res.status(400).json({ message: 'File upload error.', errors: { image: err.message } });
-    }
+    if (err) return res.status(400).json({ message: 'File upload error.', errors: { image: err.message } });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
     const { title, category, description, condition, depositAmount, status } = req.body;
     const db = getDb();
 
-    // Check ownership
-    const existing = db.prepare('SELECT * FROM tools WHERE id = ?').get(req.params.id);
-    if (!existing) return res.status(404).json({ message: 'Tool not found.' });
+    const { data: existing, error: fetchErr } = await db
+      .from('tools')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
+    if (!existing)                      return res.status(404).json({ message: 'Tool not found.' });
     if (existing.user_id !== req.user.id) return res.status(403).json({ message: 'Not authorized to edit this tool.' });
 
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : existing.image_url;
+    // Only upload a new image if a file was provided
+    const imageUrl = req.file
+      ? await uploadImageToSupabase(db, req.file)
+      : existing.image_url;
 
-    db.prepare(`
-      UPDATE tools 
-      SET title = ?, category = ?, description = ?, condition = ?, deposit_amount = ?, status = ?, image_url = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      title?.trim() || existing.title,
-      category?.trim() || existing.category,
-      description?.trim() || existing.description,
-      condition?.trim() || existing.condition,
-      depositAmount !== undefined ? Number(depositAmount) : existing.deposit_amount,
-      status || existing.status,
-      imageUrl,
-      req.params.id
-    );
+    const { error } = await db
+      .from('tools')
+      .update({
+        title:          title?.trim()        || existing.title,
+        category:       category?.trim()     || existing.category,
+        description:    description?.trim()  || existing.description,
+        condition:      condition?.trim()    || existing.condition,
+        deposit_amount: depositAmount !== undefined ? Number(depositAmount) : existing.deposit_amount,
+        status:         status               || existing.status,
+        image_url:      imageUrl,
+        updated_at:     new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
 
+    if (error) throw error;
     res.json({ message: 'Tool updated successfully.' });
   } catch (err) {
     console.error('Update tool error:', err);
@@ -294,18 +290,23 @@ router.put('/:id', authenticateToken, (req, res, next) => {
   }
 });
 
-// ─── DELETE /api/tools/:id — Remove a tool ──────────────
-router.delete('/:id', authenticateToken, (req, res) => {
+// ─── DELETE /api/tools/:id — Remove a tool ───────────────────
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const db = getDb();
-    const existing = db.prepare('SELECT * FROM tools WHERE id = ?').get(req.params.id);
+    const { data: existing, error: fetchErr } = await db
+      .from('tools')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
 
-    if (!existing) return res.status(404).json({ message: 'Tool not found.' });
-    if (existing.user_id !== req.user.id) {
-      return res.status(403).json({ message: 'Not authorized to delete this tool.' });
-    }
+    if (fetchErr) throw fetchErr;
+    if (!existing)                      return res.status(404).json({ message: 'Tool not found.' });
+    if (existing.user_id !== req.user.id) return res.status(403).json({ message: 'Not authorized to delete this tool.' });
 
-    db.prepare('DELETE FROM tools WHERE id = ?').run(req.params.id);
+    const { error } = await db.from('tools').delete().eq('id', req.params.id);
+    if (error) throw error;
+
     res.json({ message: 'Tool deleted successfully.' });
   } catch (err) {
     console.error('Delete tool error:', err);
