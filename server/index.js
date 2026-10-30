@@ -1,11 +1,21 @@
 require('dotenv').config();
-const express     = require('express');
-const cors        = require('cors');
+const express      = require('express');
+const cors         = require('cors');
 const cookieParser = require('cookie-parser');
-const rateLimit   = require('express-rate-limit');
+const rateLimit    = require('express-rate-limit');
 
-const authRoutes = require('./routes/auth');
-const toolRoutes = require('./routes/tools');
+// ─── Sprint 1 Routes ─────────────────────────────────────────
+const authRoutes  = require('./routes/auth');
+const toolRoutes  = require('./routes/tools');
+
+// ─── Sprint 2 Routes ─────────────────────────────────────────
+const requestRoutes      = require('./routes/requests');
+const reviewRoutes       = require('./routes/reviews');
+const notificationRoutes = require('./routes/notifications');
+
+// ─── Sprint 2 Services ───────────────────────────────────────
+const { registerNotificationListeners } = require('./services/notificationListener');
+const { startOverdueScheduler }         = require('./workers/overdueScheduler');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -56,6 +66,16 @@ app.use('/auth',      authRoutes);
 app.use('/api/tools', toolRoutes);
 app.use('/tools',     toolRoutes);
 
+// ─── Sprint 2 Routes ─────────────────────────────────────────
+app.use('/api/requests',      requestRoutes);
+app.use('/requests',          requestRoutes);
+
+app.use('/api/reviews',       reviewRoutes);
+app.use('/reviews',           reviewRoutes);
+
+app.use('/api/notifications', notificationRoutes);
+app.use('/notifications',     notificationRoutes);
+
 // Health check and root ping with DB diagnostic
 app.get(['/', '/health', '/api/health'], async (req, res) => {
   let dbStatus = 'unknown';
@@ -88,4 +108,8 @@ app.listen(PORT, () => {
   console.log(`\n🏡  NTEE Neighborhood API`);
   console.log(`   Running on http://localhost:${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/api/health\n`);
+
+  // ── Sprint 2: Boot event-driven subsystems ──────────────
+  registerNotificationListeners(); // wire up event → DB notification pipeline
+  startOverdueScheduler();         // daily cron at 06:00 IST
 });

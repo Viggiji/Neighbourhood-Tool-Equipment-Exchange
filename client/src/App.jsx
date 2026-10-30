@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import CreateToolPage from './pages/CreateToolPage';
 import ToolDetailsPage from './pages/ToolDetailsPage';
+import OwnerDashboardPage from './pages/OwnerDashboardPage';
 import LoadingSpinner from './components/ui/LoadingSpinner';
 import NotFoundPage from './pages/NotFoundPage';
 
@@ -75,6 +76,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <ToolDetailsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/owner"
+          element={
+            <ProtectedRoute>
+              <OwnerDashboardPage />
             </ProtectedRoute>
           }
         />
