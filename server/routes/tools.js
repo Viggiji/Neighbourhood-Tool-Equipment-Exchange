@@ -66,10 +66,17 @@ router.get('/', async (req, res) => {
       `)
       .order('created_at', { ascending: false });
 
-    // Status filter
-    if (status) {
-      query = query.eq('status', status);
-    } else {
+    // Status filter (supports comma-separated e.g. 'Available,Rented', 'all', or 'None')
+    if (status === 'None') {
+      return res.json({ tools: [] });
+    } else if (status && status !== 'all') {
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+      if (statuses.length === 1) {
+        query = query.eq('status', statuses[0]);
+      } else if (statuses.length > 1) {
+        query = query.in('status', statuses);
+      }
+    } else if (!status) {
       query = query.in('status', ['Available', 'Online']);
     }
 
@@ -131,6 +138,49 @@ router.get('/my', authenticateToken, async (req, res) => {
   }
 });
 
+// ─── GET /api/tools/:id/booked-dates — Reserved date ranges ──
+router.get('/:id/booked-dates', async (req, res) => {
+  try {
+    const db = getDb();
+    const toolId = parseInt(req.params.id, 10);
+    if (isNaN(toolId)) return res.status(400).json({ message: 'Invalid tool id.' });
+
+    const [rentalsRes, pendingRes] = await Promise.all([
+      db
+        .from('rentals')
+        .select('start_date, due_date, status')
+        .eq('tool_id', toolId)
+        .in('status', ['active', 'return_submitted', 'overdue']),
+      db
+        .from('borrow_requests')
+        .select('start_date, end_date, status')
+        .eq('tool_id', toolId)
+        .eq('status', 'pending'),
+    ]);
+
+    if (rentalsRes.error) throw rentalsRes.error;
+    if (pendingRes.error) throw pendingRes.error;
+
+    const bookedRanges = [
+      ...(rentalsRes.data || []).map(r => ({
+        startDate: r.start_date,
+        endDate:   r.due_date,
+        kind:      'approved',
+      })),
+      ...(pendingRes.data || []).map(r => ({
+        startDate: r.start_date,
+        endDate:   r.end_date,
+        kind:      'pending',
+      })),
+    ];
+
+    return res.json({ bookedRanges });
+  } catch (err) {
+    console.error('Fetch booked dates error:', err);
+    return res.status(500).json({ message: 'Could not load availability calendar.' });
+  }
+});
+
 // ─── GET /api/tools/:id — Single tool ────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -140,7 +190,7 @@ router.get('/:id', async (req, res) => {
       .select(`
         id, title, category, description, condition, deposit_amount,
         status, image_url, created_at, user_id,
-        users ( full_name, block_code )
+        users ( full_name, block_code, created_at )
       `)
       .eq('id', req.params.id)
       .maybeSingle();
@@ -150,18 +200,19 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       tool: {
-        id:           tool.id,
-        title:        tool.title,
-        category:     tool.category,
-        description:  tool.description,
-        condition:    tool.condition,
-        depositAmount: tool.deposit_amount,
-        status:       tool.status,
-        imageUrl:     tool.image_url,
-        ownerId:      tool.user_id,
-        ownerName:    tool.users?.full_name,
-        ownerBlock:   tool.users?.block_code,
-        createdAt:    tool.created_at,
+        id:             tool.id,
+        title:          tool.title,
+        category:       tool.category,
+        description:    tool.description,
+        condition:      tool.condition,
+        depositAmount:  tool.deposit_amount,
+        status:         tool.status,
+        imageUrl:       tool.image_url,
+        ownerId:        tool.user_id,
+        ownerName:      tool.users?.full_name,
+        ownerBlock:     tool.users?.block_code,
+        ownerCreatedAt: tool.users?.created_at,
+        createdAt:      tool.created_at,
       },
     });
   } catch (err) {

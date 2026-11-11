@@ -6,7 +6,7 @@
 
 -- ─── ENUM-style check constraints ────────────────────────────
 -- borrow_requests.status  → pending | accepted | rejected | cancelled
--- rentals.status          → active  | returned | overdue
+-- rentals.status          → active  | return_submitted | returned | overdue
 -- reviews.rating          → 1..5
 
 -- ─── borrow_requests ─────────────────────────────────────────
@@ -33,26 +33,29 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
 -- ─── rentals ─────────────────────────────────────────────────
 -- Created atomically when an owner accepts a borrow_request
 CREATE TABLE IF NOT EXISTS rentals (
-  id                  BIGSERIAL   PRIMARY KEY,
-  borrow_request_id   BIGINT      NOT NULL UNIQUE REFERENCES borrow_requests(id) ON DELETE CASCADE,
-  tool_id             BIGINT      NOT NULL REFERENCES tools(id)  ON DELETE CASCADE,
-  borrower_id         BIGINT      NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
-  owner_id            BIGINT      NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
-  start_date          DATE        NOT NULL,
-  due_date            DATE        NOT NULL,
-  returned_at         TIMESTAMPTZ,
-  status              TEXT        NOT NULL DEFAULT 'active',
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  id                   BIGSERIAL   PRIMARY KEY,
+  borrow_request_id    BIGINT      NOT NULL UNIQUE REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  tool_id              BIGINT      NOT NULL REFERENCES tools(id)  ON DELETE CASCADE,
+  borrower_id          BIGINT      NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  owner_id             BIGINT      NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  start_date           DATE        NOT NULL,
+  due_date             DATE        NOT NULL,
+  return_submitted_at  TIMESTAMPTZ,
+  return_checklist     JSONB,
+  return_note          TEXT,
+  returned_at          TIMESTAMPTZ,
+  status               TEXT        NOT NULL DEFAULT 'active',
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-  CONSTRAINT chk_rental_status  CHECK (status IN ('active','returned','overdue'))
+  CONSTRAINT chk_rental_status  CHECK (status IN ('active','return_submitted','returned','overdue'))
 );
 
 -- ─── reviews ─────────────────────────────────────────────────
--- A borrower leaves one review per completed rental
+-- Two-way trust ratings: both borrower and owner can leave one review per completed rental
 CREATE TABLE IF NOT EXISTS reviews (
   id          BIGSERIAL   PRIMARY KEY,
-  rental_id   BIGINT      NOT NULL UNIQUE REFERENCES rentals(id) ON DELETE CASCADE,
+  rental_id   BIGINT      NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
   reviewer_id BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reviewee_id BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   tool_id     BIGINT      NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
@@ -60,8 +63,9 @@ CREATE TABLE IF NOT EXISTS reviews (
   comment     TEXT,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-  CONSTRAINT chk_rating         CHECK (rating BETWEEN 1 AND 5),
-  CONSTRAINT chk_no_self_review CHECK (reviewer_id <> reviewee_id)
+  CONSTRAINT uq_review_per_party UNIQUE (rental_id, reviewer_id),
+  CONSTRAINT chk_rating          CHECK (rating BETWEEN 1 AND 5),
+  CONSTRAINT chk_no_self_review  CHECK (reviewer_id <> reviewee_id)
 );
 
 -- ─── notifications ────────────────────────────────────────────

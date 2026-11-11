@@ -6,7 +6,8 @@
 
 -- ─────────────────────────────────────────────────────────────
 -- create_borrow_request(…)
--- Atomically checks for overlapping requests/rentals and inserts.
+-- Atomically checks for overlapping pending/active requests and inserts.
+-- Completed/returned rentals do not block future re-bookings.
 -- RAISES an exception with 'overlapping' in the message if a
 -- conflict is detected — the Node layer surfaces this as a 409.
 -- ─────────────────────────────────────────────────────────────
@@ -25,14 +26,18 @@ DECLARE
   overlap_count INTEGER;
   new_request   borrow_requests;
 BEGIN
-  -- Lock: count accepted/pending requests whose date ranges overlap.
+  -- Lock: count pending or currently active/unreturned requests whose date ranges overlap.
   -- Two ranges [A,B] and [C,D] overlap when A <= D AND C <= B.
   SELECT COUNT(*) INTO overlap_count
-  FROM borrow_requests
-  WHERE tool_id    = p_tool_id
-    AND status    IN ('pending', 'accepted')
-    AND start_date <= p_end_date
-    AND end_date   >= p_start_date;
+  FROM borrow_requests br
+  LEFT JOIN rentals r ON r.borrow_request_id = br.id
+  WHERE br.tool_id = p_tool_id
+    AND (
+      br.status = 'pending'
+      OR (br.status = 'accepted' AND COALESCE(r.status, 'active') <> 'returned')
+    )
+    AND br.start_date <= p_end_date
+    AND br.end_date   >= p_start_date;
 
   IF overlap_count > 0 THEN
     RAISE EXCEPTION 'overlapping booking detected for tool % between % and %',
@@ -103,7 +108,7 @@ $$;
 
 -- ─────────────────────────────────────────────────────────────
 -- get_owner_trust_score(p_owner_id)
--- Returns a weighted average rating for an owner.
+-- Returns a weighted average rating for a user.
 -- Used by the Reviews module to surface the trust score.
 -- ─────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION get_owner_trust_score(p_owner_id BIGINT)

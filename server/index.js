@@ -10,6 +10,7 @@ const toolRoutes  = require('./routes/tools');
 
 // ─── Sprint 2 Routes ─────────────────────────────────────────
 const requestRoutes      = require('./routes/requests');
+const rentalRoutes       = require('./routes/rentals');
 const reviewRoutes       = require('./routes/reviews');
 const notificationRoutes = require('./routes/notifications');
 
@@ -69,6 +70,9 @@ app.use('/tools',     toolRoutes);
 // ─── Sprint 2 Routes ─────────────────────────────────────────
 app.use('/api/requests',      requestRoutes);
 app.use('/requests',          requestRoutes);
+
+app.use('/api/rentals',       rentalRoutes);
+app.use('/rentals',           rentalRoutes);
 
 app.use('/api/reviews',       reviewRoutes);
 app.use('/reviews',           reviewRoutes);

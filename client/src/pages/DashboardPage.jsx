@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Search, Filter, MapPin, Clock, ArrowUpRight,
-  Layers, Package
+  Layers, Package, CalendarDays, CheckCircle2, AlertCircle,
+  RotateCcw, Star, XCircle, ChevronDown, ChevronUp, Inbox, Hourglass,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
+import ReviewModal from '../components/ReviewModal';
+import ReturnChecklistModal from '../components/ReturnChecklistModal';
 
 const CATEGORIES = ['Power Tools', 'Hand Tools', 'Gardening', 'Ladders & Scaffolding', 'Other'];
 
@@ -30,6 +34,10 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function formatDate(d) {
+  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -39,6 +47,29 @@ function useDebounce(value, delay) {
   return debouncedValue;
 }
 
+// ── Status badge ──────────────────────────────────────────────
+function StatusBadge({ status }) {
+  const map = {
+    pending:          'text-[#f0c060] bg-[#c88b30]/12 border-[#c88b30]/25',
+    accepted:         'text-[#7db884] bg-[#4a8c55]/12 border-[#4a8c55]/25',
+    rejected:         'text-[#e05040] bg-[#c0392b]/10 border-[#c0392b]/20',
+    cancelled:        'text-[#5a5751] bg-[#3d3b37]/30 border-[#3d3b37]',
+    active:           'text-[#7db884] bg-[#4a8c55]/12 border-[#4a8c55]/25',
+    return_submitted: 'text-[#f0c060] bg-[#c88b30]/12 border-[#c88b30]/25',
+    overdue:          'text-[#e05040] bg-[#c0392b]/10 border-[#c0392b]/20',
+    returned:         'text-[#a8a49c] bg-[#3d3b37]/30 border-[#3d3b37]',
+  };
+  const labelMap = {
+    return_submitted: 'Return Pending',
+    returned: 'Completed',
+  };
+  return (
+    <span className={`text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full border ${map[status] || map.returned}`}>
+      {labelMap[status] || status}
+    </span>
+  );
+}
+
 // ── Tab: Browse all tools ─────────────────────────────────────
 function BrowseTab() {
   const [tools, setTools] = useState([]);
@@ -46,27 +77,33 @@ function BrowseTab() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 350);
   const [selectedCategory, setSelectedCategory] = useState('');
-  const [statusFilter, setStatusFilter] = useState({ available: true, online: true });
+  const [statusFilter, setStatusFilter] = useState({ available: true, rented: false });
 
-  const fetchTools = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (debouncedSearch) params.append('search', debouncedSearch);
-      if (selectedCategory) params.append('category', selectedCategory);
-      if (statusFilter.available && !statusFilter.online) params.append('status', 'Available');
-      else if (!statusFilter.available && statusFilter.online) params.append('status', 'Online');
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (debouncedSearch) params.append('search', debouncedSearch);
+        if (selectedCategory) params.append('category', selectedCategory);
 
-      const res = await api.get(`/tools?${params.toString()}`);
-      setTools(res.data.tools);
-    } catch (err) {
-      console.error('Failed to fetch tools:', err);
-    } finally {
-      setLoading(false);
+        const selectedStatuses = [];
+        if (statusFilter.available) selectedStatuses.push('Available');
+        if (statusFilter.rented) selectedStatuses.push('Rented');
+        params.append('status', selectedStatuses.length > 0 ? selectedStatuses.join(',') : 'None');
+
+        const res = await api.get(`/tools?${params.toString()}`);
+        if (active) setTools(res.data.tools);
+      } catch (err) {
+        console.error('Failed to fetch tools:', err);
+      } finally {
+        if (active) setLoading(false);
+      }
     }
+    load();
+    return () => { active = false; };
   }, [debouncedSearch, selectedCategory, statusFilter]);
-
-  useEffect(() => { fetchTools(); }, [fetchTools]);
 
   const toggleStatus = (status) => setStatusFilter(prev => ({ ...prev, [status]: !prev[status] }));
 
@@ -85,7 +122,7 @@ function BrowseTab() {
             <div className="space-y-2">
               {[
                 { key: 'available', label: 'Available' },
-                { key: 'online',    label: 'Online' },
+                { key: 'rented',    label: 'Rented' },
               ].map(({ key, label }) => (
                 <label key={key} className="flex items-center gap-2.5 cursor-pointer group">
                   <div className="relative">
@@ -184,19 +221,22 @@ function MyListingsTab() {
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchMyTools = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.get('/tools/my');
-      setTools(res.data.tools);
-    } catch (err) {
-      console.error('Failed to fetch my tools:', err);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      setLoading(true);
+      try {
+        const res = await api.get('/tools/my');
+        if (active) setTools(res.data.tools);
+      } catch (err) {
+        console.error('Failed to fetch my tools:', err);
+      } finally {
+        if (active) setLoading(false);
+      }
     }
+    load();
+    return () => { active = false; };
   }, []);
-
-  useEffect(() => { fetchMyTools(); }, [fetchMyTools]);
 
   if (loading) {
     return (
@@ -241,14 +281,376 @@ function MyListingsTab() {
   );
 }
 
+// ── Tab: My Rentals ───────────────────────────────────────────
+function MyRentalsTab() {
+  const [outgoing, setOutgoing]           = useState([]);
+  const [rentals, setRentals]             = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [returnTarget, setReturnTarget]   = useState(null);
+  const [reviewTarget, setReviewTarget]   = useState(null);
+  const [showHistory, setShowHistory]     = useState(false);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [reqRes, rentalRes] = await Promise.all([
+        api.get('/requests/outgoing'),
+        api.get('/rentals/my'),
+      ]);
+      setOutgoing(reqRes.data.requests || []);
+      setRentals(rentalRes.data.rentals || []);
+    } catch (err) {
+      console.error('Failed to fetch rentals:', err);
+      toast.error('Could not load your rentals.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function init() {
+      try {
+        const [reqRes, rentalRes] = await Promise.all([
+          api.get('/requests/outgoing'),
+          api.get('/rentals/my'),
+        ]);
+        if (active) {
+          setOutgoing(reqRes.data.requests || []);
+          setRentals(rentalRes.data.rentals || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch rentals:', err);
+        if (active) toast.error('Could not load your rentals.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    init();
+    return () => { active = false; };
+  }, []);
+
+  async function handleCancel(requestId) {
+    try {
+      await api.patch(`/requests/${requestId}/cancel`);
+      toast.success('Request cancelled.');
+      await fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not cancel request.');
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-24">
+        <LoadingSpinner size="lg" text="Loading your rentals..." />
+      </div>
+    );
+  }
+
+  const activeRentals    = rentals.filter(r => ['active', 'overdue', 'return_submitted'].includes(r.status));
+  const pendingRequests  = outgoing.filter(r => r.status === 'pending');
+  const completedRentals = rentals.filter(r => r.status === 'returned');
+  const otherRequests    = outgoing.filter(r => ['rejected', 'cancelled', 'accepted'].includes(r.status));
+
+  const hasAnything = activeRentals.length + pendingRequests.length + completedRentals.length + otherRequests.length > 0;
+
+  if (!hasAnything) {
+    return (
+      <motion.div
+        className="rounded-2xl bg-[#242220] border border-[#2f2d2a] p-16 text-center"
+        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div className="w-14 h-14 rounded-2xl bg-[#2f2d2a] border border-[#3d3b37] flex items-center justify-center mx-auto mb-5">
+          <CalendarDays size={24} className="text-[#5a5751]" />
+        </div>
+        <h3 className="text-[#ede9e3] font-semibold text-lg mb-2">No rentals yet</h3>
+        <p className="text-[#5a5751] text-sm max-w-xs mx-auto leading-relaxed">
+          Browse tools on your block and send a borrow request to get started.
+        </p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div
+      className="space-y-8 max-w-2xl"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+
+      {/* ── Active / Overdue / Return Submitted Rentals ── */}
+      {activeRentals.length > 0 && (
+        <section>
+          <SectionHeading icon={<CheckCircle2 size={14} className="text-[#7db884]" />} label="Active Rentals" count={activeRentals.length} />
+          <div className="space-y-3">
+            {activeRentals.map(rental => (
+              <RentalCard
+                key={rental.id}
+                rental={rental}
+                onOpenReturn={() => setReturnTarget(rental)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Pending Requests ── */}
+      {pendingRequests.length > 0 && (
+        <section>
+          <SectionHeading icon={<Inbox size={14} className="text-[#f0c060]" />} label="Pending Requests" count={pendingRequests.length} />
+          <div className="space-y-3">
+            {pendingRequests.map(req => (
+              <RequestCard key={req.id} request={req} onCancel={handleCancel} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Completed Rentals ── */}
+      {completedRentals.length > 0 && (
+        <section>
+          <SectionHeading icon={<Star size={14} className="text-[#f0c060]" />} label="Completed" count={completedRentals.length} />
+          <div className="space-y-3">
+            {completedRentals.map(rental => (
+              <CompletedRentalCard
+                key={rental.id}
+                rental={rental}
+                onReview={() => setReviewTarget(rental)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Past Requests (collapsed) ── */}
+      {otherRequests.length > 0 && (
+        <section>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="flex items-center gap-2 text-[#5a5751] hover:text-[#7d7a73] text-sm transition-colors"
+          >
+            {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            Past requests ({otherRequests.length})
+          </button>
+          <AnimatePresence>
+            {showHistory && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25 }}
+                className="overflow-hidden"
+              >
+                <div className="space-y-3 mt-3">
+                  {otherRequests.map(req => (
+                    <RequestCard key={req.id} request={req} readOnly />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+      )}
+
+      {/* Return handback checklist modal */}
+      <ReturnChecklistModal
+        rental={returnTarget}
+        isOpen={!!returnTarget}
+        onClose={() => setReturnTarget(null)}
+        onSuccess={fetchAll}
+      />
+
+      {/* Review modal */}
+      <ReviewModal
+        rental={reviewTarget}
+        role="borrower"
+        isOpen={!!reviewTarget}
+        onClose={() => setReviewTarget(null)}
+        onSuccess={fetchAll}
+      />
+    </motion.div>
+  );
+}
+
+// ── Section heading helper ────────────────────────────────────
+function SectionHeading({ icon, label, count }) {
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      {icon}
+      <h3 className="text-sm font-semibold text-[#a8a49c] uppercase tracking-wider">{label}</h3>
+      <span className="text-xs text-[#5a5751] bg-[#2f2d2a] px-2 py-0.5 rounded-full">{count}</span>
+    </div>
+  );
+}
+
+// ── Active rental card ────────────────────────────────────────
+function RentalCard({ rental, onOpenReturn }) {
+  const isOverdue = rental.status === 'overdue';
+  const isSubmitted = rental.status === 'return_submitted';
+
+  return (
+    <motion.div
+      className={`rounded-xl bg-[#242220] border p-5 ${
+        isOverdue ? 'border-[#c0392b]/35' : isSubmitted ? 'border-[#c88b30]/30' : 'border-[#2f2d2a]'
+      }`}
+      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      {isOverdue && (
+        <div className="flex items-center gap-1.5 text-[#e05040] text-xs font-semibold mb-3 pb-3 border-b border-[#c0392b]/20">
+          <AlertCircle size={12} /> Overdue — please complete the return checklist and return immediately
+        </div>
+      )}
+
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          {rental.tools?.image_url ? (
+            <img src={rental.tools.image_url} alt={rental.tools.title} className="w-10 h-10 rounded-lg object-cover border border-[#3d3b37] shrink-0" />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-[#2f2d2a] border border-[#3d3b37] flex items-center justify-center shrink-0">
+              <Package size={15} className="text-[#5a5751]" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-[#ede9e3] font-semibold text-sm truncate">{rental.tools?.title}</p>
+            <p className="text-[#5a5751] text-xs">
+              Owner: {rental.owner?.full_name} · Pickup/Return: Block {rental.owner?.block_code}
+            </p>
+          </div>
+        </div>
+        <StatusBadge status={rental.status} />
+      </div>
+
+      <div className="flex items-center justify-between gap-4 mb-4 text-xs text-[#7d7a73]">
+        <div className="flex items-center gap-1.5">
+          <CalendarDays size={11} className="text-[#5a5751]" />
+          {formatDate(rental.start_date)} → Due {formatDate(rental.due_date)}
+        </div>
+      </div>
+
+      {isSubmitted ? (
+        <div className="flex items-center gap-2 py-2.5 px-3 rounded-lg bg-[#c88b30]/10 border border-[#c88b30]/20 text-[#f0c060] text-xs font-medium">
+          <Hourglass size={13} className="shrink-0" />
+          Return checklist submitted — waiting for {rental.owner?.full_name} to confirm handback.
+        </div>
+      ) : (
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={onOpenReturn}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg
+                     bg-[#4a8c55]/12 hover:bg-[#4a8c55]/22 border border-[#4a8c55]/25 hover:border-[#4a8c55]/45
+                     text-[#7db884] text-sm font-semibold transition-all"
+        >
+          <RotateCcw size={14} />
+          Return Tool
+        </motion.button>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Pending request card ──────────────────────────────────────
+function RequestCard({ request, onCancel, readOnly }) {
+  return (
+    <motion.div
+      className="rounded-xl bg-[#242220] border border-[#2f2d2a] p-5"
+      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-[#2f2d2a] border border-[#3d3b37] flex items-center justify-center shrink-0">
+            <Package size={15} className="text-[#5a5751]" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[#ede9e3] font-semibold text-sm truncate">{request.tools?.title}</p>
+            <p className="text-[#5a5751] text-xs">from {request.owner?.full_name} · Block {request.owner?.block_code}</p>
+          </div>
+        </div>
+        <StatusBadge status={request.status} />
+      </div>
+      <div className="flex items-center gap-4 text-xs text-[#7d7a73] mb-3">
+        <div className="flex items-center gap-1.5">
+          <CalendarDays size={11} className="text-[#5a5751]" />
+          {formatDate(request.start_date)} → {formatDate(request.end_date)}
+        </div>
+        <span className="text-[#3d3b37] flex items-center gap-1 ml-auto">
+          <Clock size={10} /> {timeAgo(request.created_at)}
+        </span>
+      </div>
+      {!readOnly && request.status === 'pending' && (
+        <button
+          onClick={() => onCancel(request.id)}
+          className="flex items-center gap-1.5 text-[#5a5751] hover:text-[#e05040] text-xs font-medium transition-colors"
+        >
+          <XCircle size={12} /> Cancel request
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Completed rental card (with review CTA) ───────────────────
+function CompletedRentalCard({ rental, onReview }) {
+  return (
+    <motion.div
+      className="rounded-xl bg-[#242220] border border-[#2f2d2a] p-5"
+      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-[#2f2d2a] border border-[#3d3b37] flex items-center justify-center shrink-0">
+            <Package size={15} className="text-[#5a5751]" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[#ede9e3] font-semibold text-sm truncate">{rental.tools?.title}</p>
+            <p className="text-[#5a5751] text-xs">from {rental.owner?.full_name}</p>
+          </div>
+        </div>
+        <StatusBadge status={rental.status} />
+      </div>
+      <div className="flex items-center justify-between pt-2 border-t border-[#2f2d2a]">
+        <span className="text-[#5a5751] text-xs">
+          Completed {rental.returned_at ? timeAgo(rental.returned_at) : ''}
+        </span>
+        {rental.hasReview ? (
+          <span className="flex items-center gap-1 text-[#f0c060] text-xs">
+            <Star size={11} className="fill-[#f0c060]" /> Reviewed
+          </span>
+        ) : (
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={onReview}
+            className="flex items-center gap-1.5 text-xs font-semibold text-[#f0c060] hover:text-[#f5d080] transition-colors"
+          >
+            <Star size={11} /> Rate Your Experience
+          </motion.button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('browse');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab = ['browse', 'my', 'rentals'].includes(tabParam) ? tabParam : 'browse';
+
+  const setActiveTab = (id) => {
+    setSearchParams(id === 'browse' ? {} : { tab: id });
+  };
 
   const tabs = [
-    { id: 'browse',     label: 'Browse block',  icon: Layers  },
-    { id: 'my',        label: 'My listings',   icon: Package },
+    { id: 'browse',   label: 'Browse block',  icon: Layers },
+    { id: 'my',       label: 'My listings',   icon: Package },
+    { id: 'rentals',  label: 'My rentals',    icon: CalendarDays },
   ];
 
   return (
@@ -306,7 +708,9 @@ export default function DashboardPage() {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
           >
-            {activeTab === 'browse' ? <BrowseTab /> : <MyListingsTab />}
+            {activeTab === 'browse'  && <BrowseTab />}
+            {activeTab === 'my'      && <MyListingsTab />}
+            {activeTab === 'rentals' && <MyRentalsTab />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -336,7 +740,7 @@ function ToolCard({ tool }) {
       <div className="p-5 flex-1 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <span className={`tag ${meta.tagColor}`}>{tool.category}</span>
-          <span className={`tag ${isAvailable ? 'text-[#7db884] bg-[#4a8c55]/12 border-[#4a8c55]/25' : 'text-[#e05040] bg-[#c0392b]/10 border-[#c0392b]/20'}`}>
+          <span className={`tag ${isAvailable ? 'text-[#7db884] bg-[#4a8c55]/12 border-[#4a8c55]/25' : 'text-[#f0c060] bg-[#c88b30]/12 border-[#c88b30]/25'}`}>
             {tool.status}
           </span>
         </div>

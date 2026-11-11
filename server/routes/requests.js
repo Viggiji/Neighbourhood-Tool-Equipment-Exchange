@@ -1,13 +1,12 @@
 /**
- * NTEE — Booking & Returns Routes
+ * NTEE — Booking & Requests Routes
  * ─────────────────────────────────────────────────────────────
  * POST   /api/requests           – submit borrow request (atomic overlap check)
- * GET    /api/requests/incoming  – owner: pending requests for my tools
+ * GET    /api/requests/incoming  – owner: requests for my tools (?status=pending|all)
  * GET    /api/requests/outgoing  – borrower: my submitted requests
  * PATCH  /api/requests/:id/accept  – owner accepts → creates rental atomically
  * PATCH  /api/requests/:id/reject  – owner rejects
  * PATCH  /api/requests/:id/cancel  – borrower cancels pending request
- * PATCH  /api/rentals/:id/return   – borrower marks rental as returned
  */
 
 const express = require('express');
@@ -62,8 +61,8 @@ router.post('/', async (req, res) => {
     if (tool.user_id === borrowerId) {
       return res.status(400).json({ message: 'You cannot borrow your own tool.' });
     }
-    if (tool.status !== 'Available') {
-      return res.status(409).json({ message: 'This tool is not currently available.' });
+    if (tool.status === 'Unavailable') {
+      return res.status(409).json({ message: 'This tool is currently marked unavailable by the owner.' });
     }
 
     // 2. Atomic overlap check + insert via PostgreSQL function
@@ -116,22 +115,27 @@ router.post('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/requests/incoming — owner sees pending requests for their tools
+// GET /api/requests/incoming — owner sees requests for their tools
 // ─────────────────────────────────────────────────────────────
 router.get('/incoming', async (req, res) => {
   try {
     const db = getDb();
-    const { data, error } = await db
+    const statusFilter = req.query.status || 'pending';
+    let query = db
       .from('borrow_requests')
       .select(`
         id, tool_id, borrower_id, start_date, end_date, message, status, created_at,
-        tools   ( title, image_url, category ),
+        tools   ( id, title, image_url, category ),
         borrower:users!borrow_requests_borrower_id_fkey ( id, full_name, block_code )
       `)
       .eq('owner_id', req.user.id)
-      .eq('status', 'pending')
       .order('created_at', { ascending: false });
 
+    if (statusFilter !== 'all') {
+      query = query.eq('status', statusFilter);
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
 
     return res.json({ requests: data });
@@ -282,50 +286,6 @@ router.patch('/:id/cancel', async (req, res) => {
   } catch (err) {
     console.error('[PATCH /requests/:id/cancel]', err);
     return res.status(500).json({ message: 'Failed to cancel request.' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
-// PATCH /api/rentals/:id/return — borrower marks rental returned
-// ─────────────────────────────────────────────────────────────
-router.patch('/rentals/:id/return', async (req, res) => {
-  const rentalId = parseInt(req.params.id, 10);
-  try {
-    const db = getDb();
-
-    const { data: rental } = await db
-      .from('rentals')
-      .select('*, tools(title)')
-      .eq('id', rentalId)
-      .maybeSingle();
-
-    if (!rental) return res.status(404).json({ message: 'Rental not found.' });
-    if (rental.borrower_id !== req.user.id) return res.status(403).json({ message: 'Forbidden.' });
-    if (rental.status === 'returned') return res.status(409).json({ message: 'Already marked as returned.' });
-
-    // Mark rental returned + restore tool status to Available
-    const { error: rentalErr } = await db
-      .from('rentals')
-      .update({ status: 'returned', returned_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', rentalId);
-
-    if (rentalErr) throw rentalErr;
-
-    await db.from('tools').update({ status: 'Available', updated_at: new Date().toISOString() }).eq('id', rental.tool_id);
-
-    const { data: borrower } = await db.from('users').select('full_name').eq('id', req.user.id).maybeSingle();
-
-    eventBus.emit(EVENTS.BOOKING_RETURNED, {
-      rental,
-      borrowerName: borrower?.full_name || 'The borrower',
-      toolTitle:    rental.tools?.title || 'the tool',
-    });
-
-    return res.json({ message: 'Rental marked as returned.' });
-
-  } catch (err) {
-    console.error('[PATCH /rentals/:id/return]', err);
-    return res.status(500).json({ message: 'Failed to update rental.' });
   }
 });
 

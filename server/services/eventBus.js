@@ -23,12 +23,13 @@ const eventBus = new NTEEEventBus();
 
 // ─── Canonical event names ────────────────────────────────────
 const EVENTS = {
-  BOOKING_REQUESTED : 'BOOKING_REQUESTED',   // borrower submitted a request
-  BOOKING_ACCEPTED  : 'BOOKING_ACCEPTED',    // owner accepted  → rental created
-  BOOKING_REJECTED  : 'BOOKING_REJECTED',    // owner rejected
-  BOOKING_RETURNED  : 'BOOKING_RETURNED',    // borrower marked as returned
-  REVIEW_SUBMITTED  : 'REVIEW_SUBMITTED',    // borrower left a review
-  OVERDUE_DETECTED  : 'OVERDUE_DETECTED',    // cron flagged overdue rental
+  BOOKING_REQUESTED        : 'BOOKING_REQUESTED',        // borrower submitted a request
+  BOOKING_ACCEPTED         : 'BOOKING_ACCEPTED',         // owner accepted → rental created
+  BOOKING_REJECTED         : 'BOOKING_REJECTED',         // owner rejected
+  BOOKING_RETURN_SUBMITTED : 'BOOKING_RETURN_SUBMITTED', // borrower submitted return checklist
+  BOOKING_RETURNED         : 'BOOKING_RETURNED',         // owner confirmed return → completed
+  REVIEW_SUBMITTED         : 'REVIEW_SUBMITTED',         // participant left a review
+  OVERDUE_DETECTED         : 'OVERDUE_DETECTED',         // cron flagged overdue rental
 };
 
 module.exports = { eventBus, EVENTS };
