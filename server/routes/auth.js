@@ -9,7 +9,7 @@ const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────
-const SALT_ROUNDS       = 12;
+const SALT_ROUNDS       = 10; // 10 rounds ≈ 100 ms; 12 is 4× slower
 const MAX_LOGIN_ATTEMPTS = 3;
 const LOCKOUT_MINUTES   = 15;
 
@@ -146,12 +146,13 @@ router.post('/login', async (req, res) => {
     res.cookie('token', token, {
       httpOnly: true,
       secure:   isProduction,
-      sameSite: isProduction ? 'none' : 'strict',
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge:   rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000,
     });
 
     res.json({
       message: `Welcome back, ${user.full_name}!`,
+      token,  // also send token in body so the client can use Bearer auth as fallback
       user: {
         id:         user.id,
         fullName:   user.full_name,
@@ -225,7 +226,7 @@ router.post('/logout', (req, res) => {
   res.clearCookie('token', {
     httpOnly: true,
     secure:   isProduction,
-    sameSite: isProduction ? 'none' : 'strict',
+    sameSite: isProduction ? 'none' : 'lax',
   });
   res.json({ message: 'Logged out successfully.' });
 });

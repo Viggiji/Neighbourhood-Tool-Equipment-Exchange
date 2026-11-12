@@ -23,23 +23,39 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// ── Global response error handler ─────────────────────────
+// ── Attach stored Bearer token for cross-origin fallback ──────
+// Browsers may block third-party cookies (Vercel → Render). The token stored
+// in localStorage is attached as Authorization: Bearer to every request so
+// the backend always has a way to authenticate even without the cookie.
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('ntee_token');
+  if (token && !config.headers['Authorization']) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// ── Global response error handler ─────────────────────────────
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const status  = error.response?.status;
-    const url     = error.config?.url ?? '';
+    const status = error.response?.status;
+    const url    = error.config?.url ?? '';
 
     // 401 on any non-login endpoint → token is invalid/expired → force logout
-    if (status === 401 && !url.includes('/auth/login')) {
+    // 403 on /auth/me specifically → token rejected by server → force logout
+    const isLoginAttempt = url.includes('/auth/login');
+    const isAuthMe       = url.includes('/auth/me');
+
+    if ((status === 401 && !isLoginAttempt) || (status === 403 && isAuthMe)) {
       localStorage.removeItem('ntee_token');
       localStorage.removeItem('ntee_user');
       // Dispatch a custom event so AuthContext can react without a circular import
       window.dispatchEvent(new CustomEvent('ntee:session-expired'));
     }
 
-    // 403 should NOT log the user out — it's a permission issue, not an auth issue
-    // (e.g. trying to access a resource that belongs to someone else)
+    // 403 on other routes should NOT log the user out —
+    // it's a resource-level permission issue, not an auth issue.
 
     return Promise.reject(error);
   }

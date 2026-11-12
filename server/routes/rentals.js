@@ -323,4 +323,44 @@ router.patch('/:id/return', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /api/rentals/tool/:toolId/my-completed
+// Returns the borrower's most recent completed (returned) rental for a specific
+// tool, plus a hasReview flag so the UI knows whether a review has been left.
+// Used by ToolDetailsPage to show a "Rate This Tool" CTA.
+// ─────────────────────────────────────────────────────────────
+router.get('/tool/:toolId/my-completed', async (req, res) => {
+  try {
+    const db     = getDb();
+    const toolId = parseInt(req.params.toolId, 10);
+    if (isNaN(toolId)) return res.status(400).json({ message: 'Invalid tool id.' });
+
+    const { data: rental, error } = await db
+      .from('rentals')
+      .select('id, tool_id, start_date, due_date, returned_at, status')
+      .eq('borrower_id', req.user.id)
+      .eq('tool_id', toolId)
+      .eq('status', 'returned')
+      .order('returned_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!rental) return res.json({ rental: null });
+
+    // Check if this borrower already reviewed this rental
+    const { data: existing } = await db
+      .from('reviews')
+      .select('id')
+      .eq('rental_id', rental.id)
+      .eq('reviewer_id', req.user.id)
+      .maybeSingle();
+
+    return res.json({ rental: { ...rental, hasReview: !!existing } });
+  } catch (err) {
+    console.error('[GET /rentals/tool/:toolId/my-completed]', err);
+    return res.status(500).json({ message: 'Failed to check rental history.' });
+  }
+});
+
 module.exports = router;

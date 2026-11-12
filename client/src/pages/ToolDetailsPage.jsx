@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import AnimatedFormField from '../components/ui/AnimatedFormField';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import BorrowRequestModal from '../components/BorrowRequestModal';
+import ReviewModal from '../components/ReviewModal';
 
 const CATEGORIES = ['Power Tools', 'Hand Tools', 'Gardening', 'Ladders & Scaffolding', 'Other'];
 
@@ -70,6 +71,10 @@ export default function ToolDetailsPage() {
 
   const [showBorrowModal, setShowBorrowModal] = useState(false);
 
+  // "Rate This Tool" — borrower's most recent completed rental for this tool
+  const [myCompletedRental, setMyCompletedRental] = useState(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+
   const loadToolData = useCallback(async () => {
     try {
       const res = await api.get(`/tools/${id}`);
@@ -116,13 +121,15 @@ export default function ToolDetailsPage() {
           status: t.status,
         });
 
-        const [trustRes, reviewsRes] = await Promise.all([
+        const [trustRes, reviewsRes, completedRentalRes] = await Promise.all([
           api.get(`/reviews/trust/${t.ownerId}`).catch(() => null),
           api.get(`/reviews/user/${t.ownerId}`).catch(() => null),
+          api.get(`/rentals/tool/${id}/my-completed`).catch(() => null),
         ]);
         if (!active) return;
         if (trustRes) setTrustData(trustRes.data);
         if (reviewsRes) setReviews(reviewsRes.data.reviews || []);
+        if (completedRentalRes?.data?.rental) setMyCompletedRental(completedRentalRes.data.rental);
       } catch (err) {
         console.error('Fetch tool error:', err);
         if (active) {
@@ -586,6 +593,41 @@ export default function ToolDetailsPage() {
                     </p>
                   </div>
                 </div>
+
+                {/* Rate This Tool — only shown to borrowers who completed a rental */}
+                {myCompletedRental && (
+                  <AnimatePresence>
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="rounded-xl bg-[#c88b30]/10 border border-[#c88b30]/25 p-4"
+                    >
+                      <p className="text-xs font-semibold text-[#f0c060] mb-1 flex items-center gap-1.5">
+                        <Star size={12} className="fill-[#f0c060]" /> You've borrowed this tool
+                      </p>
+                      <p className="text-[11px] text-[#7d7a73] mb-3 leading-relaxed">
+                        Share your experience to help neighbors make better choices.
+                      </p>
+                      {myCompletedRental.hasReview ? (
+                        <span className="text-xs text-[#f0c060]/60 flex items-center gap-1.5">
+                          <Star size={11} className="fill-[#f0c060]/60" /> Review submitted — thank you!
+                        </span>
+                      ) : (
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => setShowReviewModal(true)}
+                          className="w-full py-2.5 rounded-lg bg-[#c88b30]/20 hover:bg-[#c88b30]/35
+                                     border border-[#c88b30]/30 text-[#f0c060] text-xs font-semibold
+                                     flex items-center justify-center gap-1.5 transition-all"
+                        >
+                          <Star size={13} /> Rate Your Experience
+                        </motion.button>
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                )}
               </motion.div>
             )}
           </div>
@@ -599,6 +641,20 @@ export default function ToolDetailsPage() {
         onClose={() => setShowBorrowModal(false)}
         onSuccess={loadToolData}
       />
+
+      {/* Tool review modal — borrower rates this rental/tool */}
+      {myCompletedRental && (
+        <ReviewModal
+          rental={myCompletedRental}
+          role="borrower"
+          isOpen={showReviewModal}
+          onClose={() => setShowReviewModal(false)}
+          onSuccess={() => {
+            setMyCompletedRental((prev) => prev ? { ...prev, hasReview: true } : prev);
+            setShowReviewModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

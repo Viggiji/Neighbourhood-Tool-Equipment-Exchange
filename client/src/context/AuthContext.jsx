@@ -8,25 +8,44 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check session on mount by hitting the backend
+    // Check session on mount by hitting the backend.
+    // The request interceptor in api.js will attach the stored Bearer token,
+    // so this works even when cookies are blocked cross-origin.
     api.get('/auth/me')
       .then((res) => {
         setUser(res.data.user);
       })
       .catch(() => {
         setUser(null);
+        localStorage.removeItem('ntee_token');
+        localStorage.removeItem('ntee_user');
       })
       .finally(() => {
         setLoading(false);
       });
 
-    // Handle global session expiration event
-    const handleSessionExpired = () => setUser(null);
+    // Handle global session expiration event (fired by api.js interceptor)
+    const handleSessionExpired = () => {
+      setUser(null);
+      localStorage.removeItem('ntee_token');
+      localStorage.removeItem('ntee_user');
+    };
     window.addEventListener('ntee:session-expired', handleSessionExpired);
     return () => window.removeEventListener('ntee:session-expired', handleSessionExpired);
   }, []);
 
-  const login = (userData) => {
+  /**
+   * Called after a successful login/register response.
+   * @param {object} userData  - The user object from the API response.
+   * @param {string} [token]   - JWT token returned in the response body (optional fallback).
+   */
+  const login = (userData, token) => {
+    if (token) {
+      // Store token so the request interceptor can send it as Authorization: Bearer
+      // in environments where cross-origin cookies are blocked.
+      localStorage.setItem('ntee_token', token);
+    }
+    localStorage.setItem('ntee_user', JSON.stringify(userData));
     setUser(userData);
   };
 
@@ -36,6 +55,8 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.error('Logout failed', err);
     } finally {
+      localStorage.removeItem('ntee_token');
+      localStorage.removeItem('ntee_user');
       setUser(null);
     }
   };

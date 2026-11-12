@@ -42,7 +42,7 @@ export default function LoginPage() {
         password: formData.password,
         rememberMe: formData.rememberMe,
       });
-      login(res.data.user);
+      login(res.data.user, res.data.token);
       toast.success(res.data.message);
       navigate('/dashboard');
     } catch (err) {

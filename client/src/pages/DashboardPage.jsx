@@ -731,7 +731,12 @@ function ToolCard({ tool }) {
     >
       {tool.imageUrl ? (
         <div className="w-full h-40 overflow-hidden bg-[#1a1917]">
-          <img src={tool.imageUrl} alt={tool.title} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity" />
+          <img
+            src={tool.imageUrl}
+            alt={tool.title}
+            className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity"
+            onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.classList.add('h-2'); }}
+          />
         </div>
       ) : (
         <div className={`w-full h-2 ${meta.bg}`} />
